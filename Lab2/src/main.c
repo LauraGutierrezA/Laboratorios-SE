@@ -5,7 +5,8 @@
 #include "esp_timer.h"
 
 
-#define MTX_G_2 3
+
+#define MTX_G_2 16 
 #define MTX_G_3 19
 #define MTX_G_4 18
 #define MTX_G_5 5
@@ -19,6 +20,7 @@
 #define FILA_5 2
 #define FILA_6 0
 #define FILA_7 4
+
 
 #define MTX_R_0 26
 #define MTX_R_1 21
@@ -296,22 +298,22 @@ void app_main() {
                 vTaskDelay(pdMS_TO_TICKS(500));
 
                 matriz_roja[7] = 0b00000000;
-                matriz_roja[6] = 0b00000000;
+                matriz_roja[6] = 0b00100100; 
                 matriz_roja[5] = 0b11111111;
                 matriz_roja[4] = 0b10111101;
                 matriz_roja[3] = 0b01111110;
-                matriz_roja[2] = 0b00111100;
+                matriz_roja[2] = 0b00011000;
                 matriz_roja[1] = 0b00011000;
                 matriz_roja[0] = 0b00111100;
 
                 matriz_verde[7] = 0b00000000;
-                matriz_verde[6] = 0b00111100;
+                matriz_verde[6] = 0b00011000; 
                 matriz_verde[5] = 0b00000000;
                 matriz_verde[4] = 0b00000000;
                 matriz_verde[3] = 0b00000000;
-                matriz_verde[2] = 0b00000000;
-                matriz_verde[1] = 0b00000000;
-                matriz_verde[0] = 0b00000000;
+                matriz_verde[2] = 0b00011000;
+                matriz_verde[1] = 0b00011000;
+                matriz_verde[0] = 0b00011000;
 
                 vTaskDelay(pdMS_TO_TICKS(5000)); 
                 estado_actual = E_PREGAME;
