@@ -45,7 +45,7 @@ void app_main() {
         ultimo_estado_btn = estado_btn;
 
         if (matriz_encendida) {
-            // Abrimos los transistores de las columnas
+            // Abrimos los transistores de columnas
             for(int i=0; i<8; i++) gpio_set_level(PINES_COLS_ROJAS[i], 1);
 
             // Barrido de filas
