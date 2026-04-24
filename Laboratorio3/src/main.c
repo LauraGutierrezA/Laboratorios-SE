@@ -52,32 +52,38 @@ void paso_antihorario(int paso){
 }
 int direccion_glob = 0;
 int velocidad_glob = 0;
-void motor_mover(int direccion, int velocidad){ // 0 OFF 1 CW -1CCW y vel en sps
+void motor_mover(int direccion, int velocidad){ 
     direccion_glob = direccion;
     velocidad_glob = velocidad;
-    if(velocidad <=0){
+
+    if(velocidad <= 0 || direccion == 0){
         motor_apagar(); 
         return;
     }
-    static int paso_actual = 0;
-    static uint64_t ultimo_tiempo_us = 0;
-
+    static int paso = 0;
+    static uint64_t ultimo_tiempo_ciclo = 0;
     uint64_t tiempo_actual_us;
+
     timer_get_counter_value(TIMER_GROUP_0, TIMER_0, &tiempo_actual_us);
 
-    uint64_t periodo_us = 1000000/velocidad;
+    if((tiempo_actual_us - ultimo_tiempo_ciclo) >= 10000){
 
-    if((tiempo_actual_us - ultimo_tiempo_us) >= periodo_us){
-        if(direccion == 1){
-            paso_horario(paso_actual);
-        } else if(direccion ==-1){
-            paso_antihorario(paso_actual);
+        int pasos_por_ciclo = velocidad / 100; 
+
+        for(int k = 0; k < pasos_por_ciclo; k++){
+            if(direccion == 1){
+                paso_horario(paso);
+            } else {
+                paso_antihorario(paso);
+            }
+
+            paso = paso + 1;
+            if(paso >= 4) paso = 0;
+
+            esp_rom_delay_us(1000); 
         }
 
-        paso_actual = paso_actual +1;
-        if(paso_actual >3) paso_actual=0;
-
-        ultimo_tiempo_us = tiempo_actual_us;
+        ultimo_tiempo_ciclo = tiempo_actual_us;
     }
 }
 
