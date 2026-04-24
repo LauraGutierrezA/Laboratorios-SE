@@ -17,8 +17,8 @@
 #define RDX_PIN 3
 //Pines motor
 #define IN1 16
-#define IN2 17
-#define IN3 18
+#define IN2 18
+#define IN3 17
 #define IN4 19
 //Pines Calefacción
 #define CALEF 23
@@ -34,25 +34,27 @@ void motor_apagar(void){
 }
 void paso_horario(int paso){
     motor_apagar();
-
     switch(paso){
-        case 0: gpio_set_level(IN1, 1); break;
-        case 1: gpio_set_level(IN2, 1); break;
-        case 2: gpio_set_level(IN3, 1); break;
-        case 3: gpio_set_level(IN4, 1); break;
+        case 0: gpio_set_level(IN1, 1); gpio_set_level(IN3, 1); break;
+        case 1: gpio_set_level(IN2, 1); gpio_set_level(IN3, 1); break;
+        case 2: gpio_set_level(IN2, 1); gpio_set_level(IN4, 1); break;
+        case 3: gpio_set_level(IN1, 1); gpio_set_level(IN4, 1); break;
     }
 }
 void paso_antihorario(int paso){
     motor_apagar();
-
     switch(paso){
-        case 0: gpio_set_level(IN4, 1); break;
-        case 1: gpio_set_level(IN3, 1); break;
-        case 2: gpio_set_level(IN2, 1); break;
-        case 3: gpio_set_level(IN1, 1); break;
+        case 0: gpio_set_level(IN1, 1); gpio_set_level(IN4, 1); break;
+        case 1: gpio_set_level(IN2, 1); gpio_set_level(IN4, 1); break;
+        case 2: gpio_set_level(IN2, 1); gpio_set_level(IN3, 1); break;
+        case 3: gpio_set_level(IN1, 1); gpio_set_level(IN3, 1); break;
     }
 }
+int direccion_glob = 0;
+int velocidad_glob = 0;
 void motor_mover(int direccion, int velocidad){ // 0 OFF 1 CW -1CCW y vel en sps
+    direccion_glob = direccion;
+    velocidad_glob = velocidad;
     if(velocidad <=0){
         motor_apagar(); 
         return;
@@ -121,7 +123,7 @@ void app_main(void){
     gpio_config_t out_cfg = {
         .pin_bit_mask = (1ULL<< IN1) | (1ULL<< IN2) | (1ULL<< IN3) | (1ULL<<IN4) |
                         (1ULL<<CALEF),
-        .mode = GPIO_MODE_OUTPUT,
+        .mode = GPIO_MODE_INPUT_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
@@ -168,13 +170,14 @@ void app_main(void){
 
     //Declaraciones
 	uint8_t data;
-    int Tc = 25;
+    int Tc = 23;
 
     int raw_temp, raw_luz; 
     int temp_mv, luz_mv; 
     int temp, luz;
 
     char mensaje_temp[100]; 
+    char mensaje_car[100]; 
     char rx_buffer[64];
     int i = 0; 
 
@@ -225,8 +228,10 @@ void app_main(void){
             }
 		}
         if((tiempo_main_us - ultimo_tiempo_impresion_us) >= 1000000){ // no imprime si no hasta 100*10ms = 1seg
-            sprintf(mensaje_temp, "Luz[mV] %d | Luz[%%] %d | Temp[mV] = %d | Temp[°] = %d \r\n", luz_mv, luz, temp_mv, temp );
+            sprintf(mensaje_temp, "Luz[mV] %d | Luz[%%] %d | Temp[mV] = %d | Temp[°] = %d | Tc[°] = %d \r\n", luz_mv, luz, temp_mv, temp, Tc );
             uart_write_bytes(UART_PORT, mensaje_temp, strlen(mensaje_temp)); 
+            sprintf(mensaje_car, "Steps motor = %d | Sentido Motor = %d | Calefaccion = %d \r\n" , velocidad_glob, direccion_glob, gpio_get_level(23));
+            uart_write_bytes(UART_PORT, mensaje_car, strlen(mensaje_car)); 
             ultimo_tiempo_impresion_us = tiempo_main_us;
 
         }
@@ -239,7 +244,7 @@ void app_main(void){
         }
         else if ((Tc - 1) <= temp && temp <= (Tc + 1)) {
             gpio_set_level(CALEF, 0);
-            motor_apagar();
+            motor_mover(0, 0);
         }
         else if ((Tc + 1) <= temp && temp <= (Tc + 3)) {
             gpio_set_level(CALEF, 0);
@@ -274,7 +279,7 @@ void app_main(void){
             porcentaje_leds = 0;
         }
 
-        uint32_t duty_cycle = ((porcentaje_leds) * 4095)/100;
+        uint32_t duty_cycle = ((100-porcentaje_leds) * 4095)/100;
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty_cycle);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
         
