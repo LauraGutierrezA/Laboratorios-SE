@@ -16,8 +16,9 @@ class SPI {
         spi_device_handle_t _spiHandle;
 
     public:
+        SPI(){}
         // El constructor recibe el hardware a usar
-        SPI(spi_host_device_t spiHost, int mosi, int miso, int clk, int cs, int mode, bool msbFirst);
+        SPI(spi_host_device_t spiHost, int mosi, int miso, int clk, int cs, int mode, bool msbFirst){};
         
         void init();
         void writeSPI(uint8_t reg, uint8_t data);
