@@ -1,3 +1,22 @@
+/* EN EL MAIN ESTO SE UTILIZARÍA ASÍ
+
+// 1. CREAR EL OBJETO
+I2CMaster i2cBus(I2C_NUM_0, GPIO_NUM_21, GPIO_NUM_22, 100000);
+
+void app_main() {
+    i2cBus.init();
+    i2cBus.writeBytes(0x68, 0x1B, 0x08, 1)
+
+    // 3. EJEMPLO DE LECTURA: Leer 2 bytes de datos (ej: Registro de datos 0x3B)
+    uint8_t sensorData[2] = {0};
+    if (i2cBus.readBytes(0x68, 0x3B, sensorData, 2)) {
+        printf("Lectura exitosa. Byte 1: %02X, Byte 2: %02X\n", sensorData[0], sensorData[1]);
+    } else {
+        printf("Error al leer por I2C\n");
+    }
+}
+*/
+
 #include "I2C.h"
 
 I2CMaster::I2CMaster(i2c_port_t port, int sdaPin, int sclPin, uint32_t speedHz = 100000){
