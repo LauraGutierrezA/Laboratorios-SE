@@ -16,8 +16,8 @@ class Uart {
     public: 
         Uart(uart_port_t port, int txPin, int rxPin); 
         void init(); 
-        void sendUart();
-        bool recieveuart(const char* format, int* outvalue); 
+        void sendUart(const char* mensaje);
+        bool recieveUart(const char* format, int* outvalue); 
 
 }; 
 
