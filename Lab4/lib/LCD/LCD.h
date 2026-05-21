@@ -10,7 +10,7 @@
 
 #define LCD_BACKLIGHT 0x08 //luz de fondo de la pantalla (0000 1000)
 #define LCD_ENABLE    0x04 //el enable (0000 01000)
-#define LCD_RS        0x01c//RS (Register select 0 comando y 1 caracter/texto)
+#define LCD_RS        0x01 //RS (Register select 0 comando y 1 caracter/texto)
 
 //declaro la clase
 class LCD {

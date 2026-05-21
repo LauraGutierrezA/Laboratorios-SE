@@ -6,6 +6,7 @@ I2CMaster i2cBus(I2C_NUM_0, GPIO_NUM_21, GPIO_NUM_22, 100000);
 void app_main() {
     i2cBus.init();
     i2cBus.writeBytes(0x68, 0x1B, 0x08, 1)
+    i2cBus.writeBytes(slaveAddr, regAddr, *data, length)
 
     // 3. EJEMPLO DE LECTURA: Leer 2 bytes de datos (ej: Registro de datos 0x3B)
     uint8_t sensorData[2] = {0};

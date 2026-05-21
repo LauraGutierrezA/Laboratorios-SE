@@ -51,16 +51,16 @@ void LCD::init()
 {
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    sendNibble(0x30, 0);
+    sendNibble(0x30, 0); //Asegurarse que está en modo 8 bits
     vTaskDelay(pdMS_TO_TICKS(5));
 
     sendNibble(0x30, 0);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    sendNibble(0x30, 0);
+    sendNibble(0x30, 0); //hay que repetirlo 3 veces porque si
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    sendNibble(0x20, 0);
+    sendNibble(0x20, 0); //Se configura en modo 4 bits
     vTaskDelay(pdMS_TO_TICKS(5));
 
     command(0x28); // 4 bits, 2 líneas, fuente 5x8
@@ -88,7 +88,7 @@ void LCD::print(const char *texto)
 {
     while (*texto) {
         data(*texto);
-        texto++;
+        texto++; //mueve el puntero hacia la siguiente letra de texto
     }
 }
 

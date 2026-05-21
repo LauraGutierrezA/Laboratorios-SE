@@ -10,6 +10,7 @@ class I2CMaster {
         int _sclPin; 
         uint32_t _speedHz; 
     public:
+        I2CMaster(){};
         I2CMaster(i2c_port_t port, int sdaPin, int sclPin, uint32_t speedHz = 100000);
         void init(); 
         bool writeBytes(uint8_t slaveAddr, uint8_t regAddr, uint8_t *data, size_t length); 
