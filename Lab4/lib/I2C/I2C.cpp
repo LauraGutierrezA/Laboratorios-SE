@@ -20,7 +20,7 @@ void app_main() {
 
 #include "I2C.h"
 
-I2CMaster::I2CMaster(i2c_port_t port, int sdaPin, int sclPin, uint32_t speedHz = 100000){
+I2CMaster::I2CMaster(i2c_port_t port, int sdaPin, int sclPin, uint32_t speedHz){
     _port = port; 
     _sdaPin = sdaPin; 
     _sclPin = sclPin; 
