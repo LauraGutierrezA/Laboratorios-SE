@@ -108,8 +108,8 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
             {
                 .uuid = &nus_tx_uuid.u,
                 .access_cb = nus_tx_access_cb,
-                .val_handle = &nus_tx_val_handle,
-                .flags = BLE_GATT_CHR_F_NOTIFY,
+                .flags = BLE_GATT_CHR_F_NOTIFY,    // <-- PRIMERO FLAGS
+                .val_handle = &nus_tx_val_handle,  // <-- LUEGO VAL_HANDLE
             },
             { 0 }
         },

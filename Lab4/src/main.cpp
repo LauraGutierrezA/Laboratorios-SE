@@ -2,167 +2,184 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
+#include "driver/gpio.h"
+#include "driver/i2c.h"
 
-#include "I2C.h"
 #include "SPI.h"
-#include "../lib/RTC/RTC.h"
-#include "BleNus.h"
-#include "LCD.h"
-#include "LED.h"
 #include "RFID.h"
+#include "I2C.h"
+#include "LCD.h"
+#include "BleNus.h"
 
-#define I2C_SDA_PIN     21
-#define I2C_SCL_PIN     22
-#define RTC_ADDR        0x68
-#define LCD_ADDR        0x27  
+// Pines SPI
+#define SPI_MOSI_PIN  23
+#define SPI_MISO_PIN  19
+#define SPI_CLK_PIN   18
+#define SPI_CS_PIN     5
 
-#define SPI_MOSI_PIN    23
-#define SPI_MISO_PIN    19
-#define SPI_CLK_PIN     18
-#define SPI_CS_PIN      5
+#define PIN_RST        4
 
-#define PIN_LED_ROJO    2
-#define PIN_LED_VERDE   4
-#define PIN_LED_AZUL    15
-#define PIN_BUZZER      13
+// Pines I2C
+#define I2C_SDA_PIN   21
+#define I2C_SCL_PIN   22
+#define LCD_I2C_ADDR  0x27
+#define RTC_ADDR      0x68
 
-const uint8_t SUPERVISOR_KEY[4] = {0x0F, 0x0F, 0x0F, 0x0F}; //cuando hagamos el lab, lo cambiamos por los numeros reales de la tarjeta
+// Llaves registradas
+static const uint8_t KEY_SUPERVISOR[4]    = {0xFB, 0x55, 0x14, 0x07};
+static const uint8_t KEY_NO_AUTORIZADO[4] = {0x74, 0xA9, 0x2C, 0x07};
+static const uint8_t KEY_REINAS[4]        = {0x88, 0x04, 0x5B, 0x9C};
 
+// Estado del sistema
 enum EstadoSistema {
     ESTADO_BLOQUEADO,
     ESTADO_ACTIVO
 };
 
-I2CMaster i2cBus(I2C_NUM_0, I2C_SDA_PIN, I2C_SCL_PIN, 100000);
-Rtc miReloj(i2cBus, RTC_ADDR);
-LCD miLcd(I2C_NUM_0, LCD_ADDR); 
+// --- RTC nativo ---
+uint8_t dec2bcd(uint8_t dec) { return ((dec / 10) << 4) | (dec % 10); }
+uint8_t bcd2dec(uint8_t bcd) { return ((bcd >> 4) * 10) + (bcd & 0x0F); }
 
-SPI spiBus(SPI1_HOST, SPI_MOSI_PIN, SPI_MISO_PIN, SPI_CLK_PIN, SPI_CS_PIN, 0, true); //modo 0 y true de que se envia el MSB de primero
-Rfid miLectorRfid(spiBus);     
-
-Led ledRojo(PIN_LED_ROJO);
-Led ledVerde(PIN_LED_VERDE);
-Led ledAzul(PIN_LED_AZUL);
-Led buzzer(PIN_BUZZER);       
-
-BleNus miBluetooth; 
-
-//aca lo imprimo bonito
-void obtenerCadenaHora(char* buffer) {
-    uint8_t h = 0, m = 0, s = 0;
-    miReloj.getTime(h, m, s); 
-    sprintf(buffer, "%02d:%02d:%02d", h, m, s);
+void rtc_set_time(uint8_t h, uint8_t m, uint8_t s, uint8_t dow, uint8_t dom, uint8_t month, uint8_t year) {
+    uint8_t data[8];
+    data[0] = 0x00;
+    data[1] = dec2bcd(s) & 0x7F; // CH=0: oscilador encendido
+    data[2] = dec2bcd(m);
+    data[3] = dec2bcd(h) & 0x3F; // formato 24h
+    data[4] = dec2bcd(dow);
+    data[5] = dec2bcd(dom);
+    data[6] = dec2bcd(month);
+    data[7] = dec2bcd(year);
+    i2c_master_write_to_device(I2C_NUM_0, RTC_ADDR, data, 8, pdMS_TO_TICKS(100));
 }
 
-extern "C" void app_main() {
-    i2cBus.init();
-    spiBus.init();
-    
-    miLcd.init();
-    miLectorRfid.init();
-    miBluetooth.init("PanelHMI"); 
+bool rtc_get_time(uint8_t *h, uint8_t *m, uint8_t *s) {
+    uint8_t reg = 0x00;
+    if (i2c_master_write_to_device(I2C_NUM_0, RTC_ADDR, &reg, 1, pdMS_TO_TICKS(50)) != ESP_OK) return false;
+    uint8_t data[3];
+    if (i2c_master_read_from_device(I2C_NUM_0, RTC_ADDR, data, 3, pdMS_TO_TICKS(50)) != ESP_OK) return false;
+    *s = bcd2dec(data[0] & 0x7F);
+    *m = bcd2dec(data[1]);
+    *h = bcd2dec(data[2] & 0x3F);
+    return true;
+}
 
-    ledRojo.init();
-    ledVerde.init();
-    ledAzul.init();
-    buzzer.init();
+// ======================================================================
+// ========================== FUNCIÓN PRINCIPAL =========================
+// ======================================================================
+
+extern "C" void app_main() {
+    // 1. Reset físico del lector RFID
+    gpio_set_direction((gpio_num_t)PIN_RST, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    gpio_set_level((gpio_num_t)PIN_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // 2. Inicializar I2C y LCD
+    I2CMaster i2cBus(I2C_NUM_0, I2C_SDA_PIN, I2C_SCL_PIN, 100000);
+    i2cBus.init();
+    LCD miLcd(I2C_NUM_0, LCD_I2C_ADDR);
+    miLcd.init();
+
+    // 3. Ajuste de hora en el RTC (Viernes 22/05/2026 17:44:37)
+    rtc_set_time(17, 44, 37, 5, 22, 5, 26);
+
+    // 4. Inicializar SPI y RFID
+    SPI spiBus(SPI2_HOST, SPI_MOSI_PIN, SPI_MISO_PIN, SPI_CLK_PIN, SPI_CS_PIN, 0, true);
+    spiBus.init();
+    Rfid lector(spiBus);
+    lector.init();
+
+    // 5. Inicializar Bluetooth
+    BleNus miBluetooth;
+    miBluetooth.init("PanelHMI");
+
+    printf("=== CONTROL DE ACCESO LISTO ===\n");
 
     EstadoSistema estadoActual = ESTADO_BLOQUEADO;
-    char bufferBle[64] = "Sin mensajes"; 
-    char bufferHora[16] = "";             
-    char tempBle[64] = "";                
-    
-    bool refrescarBloqueo = true;
+    char bufferBle[64] = "Sin mensajes";
+    char bufferHora[20] = "";
+    char tempBle[64]  = "";
+    bool refrescarBloqueo    = true;
     bool primerIngresoActivo = true;
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     while (1) {
+        uint8_t h = 0, m = 0, s = 0;
+        bool tieneHora = rtc_get_time(&h, &m, &s);
+
         switch (estadoActual) {
-            
+
             case ESTADO_BLOQUEADO:
                 if (refrescarBloqueo) {
-                    ledRojo.on();      
-                    ledVerde.off();    
-                    ledAzul.off();
-                    
                     miLcd.mostrarMensaje("Panel bloqueado", "Acerque credencial");
                     refrescarBloqueo = false;
                 }
 
+                // Drena mensajes BLE para que no se acumulen mientras está bloqueado
                 miBluetooth.leer(tempBle);
-                //preguntamos si hay una tarjeta cerca
-                if (miLectorRfid.leerTarjeta() == true) {
-                    //verificamos si es la llave correcta
-                    if (miLectorRfid.verificarTarjeta(SUPERVISOR_KEY) == true) {
-                        //se le dio acceso
-                        ledRojo.off();
-                        ledVerde.on();
-                        buzzer.on();
-                        
-                        obtenerCadenaHora(bufferHora);
-                        miLcd.mostrarMensaje("Acceso concedido", bufferHora);
-                        
-                        vTaskDelay(pdMS_TO_TICKS(500));
-                        buzzer.off(); 
-                        vTaskDelay(pdMS_TO_TICKS(500)); 
-                        ledVerde.off();
-                        
+
+                if (lector.leerTarjeta()) {
+                    lector.disableAntenna(); // apagar RF antes de escribir por I2C
+
+                    if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
+                        if (tieneHora) snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
+                        miLcd.mostrarMensaje("Acceso concedido", tieneHora ? bufferHora : "");
+                        printf("ACCESO CONCEDIDO [%s]\n", bufferHora);
+                        vTaskDelay(pdMS_TO_TICKS(1000));
                         estadoActual = ESTADO_ACTIVO;
                         primerIngresoActivo = true;
-                        strcpy(bufferBle, "Sin mensajes"); //borra los mensajes anteiores y pone sin mensajes
-                    } 
-                    else {
-                        //no se le dio acceso
+                        strcpy(bufferBle, "Sin mensajes");
+                        // antena se reactiva en primerIngresoActivo
+
+                    } else if (lector.verificarTarjeta(KEY_REINAS)) {
+                        miLcd.mostrarMensaje("Hola Reinas!", "");
+                        printf("REINAS DE LA ELECTRONICA [%s]\n", bufferHora);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                        lector.enableAntenna();
+                        refrescarBloqueo = true;
+
+                    } else {
                         miLcd.mostrarMensaje("Acceso denegado", "UID no registrado");
-                        
-                        buzzer.on();
-                        //led parpadea 3 veces
-                        for (int i = 0; i < 3; i++) {
-                            ledRojo.on();
-                            vTaskDelay(pdMS_TO_TICKS(333));
-                            ledRojo.off();
-                            vTaskDelay(pdMS_TO_TICKS(333));
-                        }
-                        buzzer.off(); 
-                        refrescarBloqueo = true; 
+                        printf("ACCESO DENEGADO [%s]\n", bufferHora);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                        lector.enableAntenna();
+                        refrescarBloqueo = true;
                     }
                 }
                 break;
 
             case ESTADO_ACTIVO:
-            //esto configura los leds y el lcd solo una vez al entrar al estado activo para evitar que la pantalla parpadee por el bucle infinito
                 if (primerIngresoActivo) {
-                    ledRojo.off();
-                    ledAzul.on();      
-                    
-                    miLcd.mostrarMensaje(bufferBle, ""); 
+                    lector.enableAntenna(); // reactivar RF al entrar al estado activo
+                    miLcd.mostrarMensaje(bufferBle, "");
                     primerIngresoActivo = false;
                 }
 
-                if (miBluetooth.leer(tempBle) == true) {
+                if (miBluetooth.leer(tempBle)) {
                     strncpy(bufferBle, tempBle, 16);
-                    bufferBle[16] = '\0'; 
-                    
-                    miLcd.setCursor(0, 0); 
-                    miLcd.print("                "); 
+                    bufferBle[16] = '\0';
                     miLcd.setCursor(0, 0);
-                    miLcd.print(bufferBle); 
+                    miLcd.print("                ");
+                    miLcd.setCursor(0, 0);
+                    miLcd.print(bufferBle);
                 }
 
-                obtenerCadenaHora(bufferHora);
-                miLcd.setCursor(1, 0); 
-                miLcd.print(bufferHora);
+                if (tieneHora) {
+                    snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
+                    miLcd.setCursor(1, 0);
+                    miLcd.print(bufferHora);
+                }
 
-                if (miLectorRfid.leerTarjeta() == true) {
-                    if (miLectorRfid.verificarTarjeta(SUPERVISOR_KEY) == true) {
-                        //se cierra sesion
-                        buzzer.on();
-                        vTaskDelay(pdMS_TO_TICKS(500)); 
-                        buzzer.off();
-                        
-                        ledAzul.off();
+                if (lector.leerTarjeta()) {
+                    if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
+                        lector.disableAntenna();
+                        miLcd.mostrarMensaje("Sesion cerrada", "");
+                        printf("SESION CERRADA\n");
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        lector.enableAntenna();
                         estadoActual = ESTADO_BLOQUEADO;
                         refrescarBloqueo = true;
                     }

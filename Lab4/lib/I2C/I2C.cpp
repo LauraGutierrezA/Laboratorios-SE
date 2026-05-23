@@ -32,9 +32,10 @@ void I2CMaster::init(){
 		.mode = I2C_MODE_MASTER,
 		.sda_io_num = _sdaPin, 
 		.scl_io_num = _sclPin, 
-		.sda_pullup_en = GPIO_PULLUP_DISABLE,
-		.scl_pullup_en = GPIO_PULLDOWN_DISABLE,
-		.master = { .clk_speed = _speedHz}
+		.sda_pullup_en = GPIO_PULLUP_ENABLE,
+		.scl_pullup_en = GPIO_PULLUP_ENABLE,
+		.master = { .clk_speed = _speedHz},
+        .clk_flags = 0
 	};
 	i2c_param_config(_port, &conf); 
 	i2c_driver_install(_port, conf.mode, 0, 0, 0);

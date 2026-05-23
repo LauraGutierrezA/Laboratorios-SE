@@ -15,6 +15,7 @@ class Rfid {
 
         void buscarTarjeta();
         bool procesarTarjeta();
+        bool antiColision();
 
     public: 
         Rfid(SPI rfid);
@@ -22,6 +23,9 @@ class Rfid {
         void init(); 
         bool leerTarjeta();
         bool verificarTarjeta(const uint8_t* uidCard);
+
+        void enableAntenna();
+        void disableAntenna();
 
         uint8_t getLongitud();
         uint8_t getByteUID(int indice);

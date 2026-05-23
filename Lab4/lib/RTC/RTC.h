@@ -25,7 +25,7 @@ class Rtc {
         Rtc(I2CMaster rtc, uint8_t addr);
         ~Rtc();
         void setTime(uint8_t time[7]);
-        void getTime(uint8_t &hour, uint8_t &min, uint8_t &sec);
+        bool getTime(uint8_t &hour, uint8_t &min, uint8_t &sec);
         uint8_t decimalaBcd (uint8_t decimal);
         uint8_t bcdaDecimal (uint8_t bcd);
 

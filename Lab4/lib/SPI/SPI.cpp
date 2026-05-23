@@ -1,7 +1,7 @@
 #include "SPI.h"
 #include <string.h> 
 
-SPI::SPI(spi_host_device_t spiHost, int mosi, int miso, int clk, int cs, int mode, bool msbFirst) {
+SPI::SPI(spi_host_device_t spiHost, int mosi, int miso, int clk, int cs, uint8_t mode, bool msbFirst) {
     _spiHost = spiHost;
     _mosiPin = mosi;
     _misoPin = miso;
@@ -25,13 +25,12 @@ void SPI::init() {
     spi_bus_initialize(_spiHost, &buscfg, SPI_DMA_CH_AUTO);
 
     //Slave Config
-    spi_device_interface_config_t devcfg = {
+spi_device_interface_config_t devcfg = {
         .mode = _mode, 
         .clock_speed_hz = 1000000, 
         .spics_io_num = _csPin,
-        .flags = _msbFirst ? 0 : SPI_DEVICE_BIT_LSBFIRST,
-        .queue_size = 1,
-       
+        .flags = (uint32_t)(_msbFirst ? 0 : SPI_DEVICE_BIT_LSBFIRST), 
+        .queue_size = 1,                                              
     };
     spi_bus_add_device(_spiHost, &devcfg, &_spiHandle);
 }
@@ -39,8 +38,10 @@ void SPI::init() {
 void SPI::writeSPI(uint8_t reg, uint8_t data) {
     uint8_t txData[2];
     
-    // Transmisión genérica: Byte 0 es el registro, Byte 1 es el dato
-    txData[0] = reg; 
+    // El RC522 requiere que la dirección se formatee como:
+    // bit7=0 (escritura), bits[6:1]=dirección, bit0=0
+    // Equivalente a: (reg << 1) & 0x7E
+    txData[0] = (reg << 1) & 0x7E;
     txData[1] = data;
 
     spi_transaction_t t;
@@ -55,8 +56,9 @@ uint8_t SPI::readSPI(uint8_t reg) {
     uint8_t txData[2];
     uint8_t rxData[2];
     
-    // Lectura genérica: Byte 0 es el registro, Byte 1 empuja el reloj
-    txData[0] = reg; 
+    // CORRECCIÓN: Para leer un registro en el MFRC522, 
+    // la dirección debe tener el bit 7 en 1 (ej: 0x37 -> 0x37 | 0x80 = 0xB7)
+    txData[0] = (reg << 1) | 0x80; 
     txData[1] = 0x00; 
 
     spi_transaction_t t;
