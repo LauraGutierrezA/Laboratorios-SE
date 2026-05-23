@@ -1,22 +1,20 @@
 #include <stdio.h>
-#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 
+// Nuestras Librerías (excepto RTC)
 #include "SPI.h"
 #include "RFID.h"
 #include "I2C.h"
 #include "LCD.h"
-#include "BleNus.h"
 
 // Pines SPI
 #define SPI_MOSI_PIN  23
 #define SPI_MISO_PIN  19
 #define SPI_CLK_PIN   18
 #define SPI_CS_PIN     5
-
 #define PIN_RST        4
 
 // Pines I2C
@@ -26,17 +24,14 @@
 #define RTC_ADDR      0x68
 
 // Llaves registradas
-static const uint8_t KEY_SUPERVISOR[4]    = {0xFB, 0x55, 0x14, 0x07};
+static const uint8_t KEY_AUTORIZADO[4]    = {0xFB, 0x55, 0x14, 0x07};
 static const uint8_t KEY_NO_AUTORIZADO[4] = {0x74, 0xA9, 0x2C, 0x07};
 static const uint8_t KEY_REINAS[4]        = {0x88, 0x04, 0x5B, 0x9C};
 
-// Estado del sistema
-enum EstadoSistema {
-    ESTADO_BLOQUEADO,
-    ESTADO_ACTIVO
-};
+// ======================================================================
+// ==================== FUNCIONES NATIVAS DEL RTC =======================
+// ======================================================================
 
-// --- RTC nativo ---
 uint8_t dec2bcd(uint8_t dec) { return ((dec / 10) << 4) | (dec % 10); }
 uint8_t bcd2dec(uint8_t bcd) { return ((bcd >> 4) * 10) + (bcd & 0x0F); }
 
@@ -55,9 +50,11 @@ void rtc_set_time(uint8_t h, uint8_t m, uint8_t s, uint8_t dow, uint8_t dom, uin
 
 bool rtc_get_time(uint8_t *h, uint8_t *m, uint8_t *s) {
     uint8_t reg = 0x00;
-    if (i2c_master_write_to_device(I2C_NUM_0, RTC_ADDR, &reg, 1, pdMS_TO_TICKS(50)) != ESP_OK) return false;
+    esp_err_t err_w = i2c_master_write_to_device(I2C_NUM_0, RTC_ADDR, &reg, 1, pdMS_TO_TICKS(50));
+    if (err_w != ESP_OK) return false;
     uint8_t data[3];
-    if (i2c_master_read_from_device(I2C_NUM_0, RTC_ADDR, data, 3, pdMS_TO_TICKS(50)) != ESP_OK) return false;
+    esp_err_t err_r = i2c_master_read_from_device(I2C_NUM_0, RTC_ADDR, data, 3, pdMS_TO_TICKS(50));
+    if (err_r != ESP_OK) return false;
     *s = bcd2dec(data[0] & 0x7F);
     *m = bcd2dec(data[1]);
     *h = bcd2dec(data[2] & 0x3F);
@@ -79,114 +76,66 @@ extern "C" void app_main() {
     // 2. Inicializar I2C y LCD
     I2CMaster i2cBus(I2C_NUM_0, I2C_SDA_PIN, I2C_SCL_PIN, 100000);
     i2cBus.init();
+
     LCD miLcd(I2C_NUM_0, LCD_I2C_ADDR);
     miLcd.init();
 
-    // 3. Ajuste de hora en el RTC (Viernes 22/05/2026 17:44:37)
+    // 3. Ajuste nativo de la hora
+    // Viernes 22 de Mayo de 2026 a las 17:44:37
     rtc_set_time(17, 44, 37, 5, 22, 5, 26);
 
     // 4. Inicializar SPI y RFID
     SPI spiBus(SPI2_HOST, SPI_MOSI_PIN, SPI_MISO_PIN, SPI_CLK_PIN, SPI_CS_PIN, 0, true);
     spiBus.init();
+
     Rfid lector(spiBus);
     lector.init();
 
-    // 5. Inicializar Bluetooth
-    BleNus miBluetooth;
-    miBluetooth.init("PanelHMI");
-
     printf("=== CONTROL DE ACCESO LISTO ===\n");
 
-    EstadoSistema estadoActual = ESTADO_BLOQUEADO;
-    char bufferBle[64] = "Sin mensajes";
     char bufferHora[20] = "";
-    char tempBle[64]  = "";
-    bool refrescarBloqueo    = true;
-    bool primerIngresoActivo = true;
-
-    TickType_t xLastWakeTime = xTaskGetTickCount();
+    uint8_t ultimo_segundo = 60;
 
     while (1) {
         uint8_t h = 0, m = 0, s = 0;
-        bool tieneHora = rtc_get_time(&h, &m, &s);
 
-        switch (estadoActual) {
-
-            case ESTADO_BLOQUEADO:
-                if (refrescarBloqueo) {
-                    miLcd.mostrarMensaje("Panel bloqueado", "Acerque credencial");
-                    refrescarBloqueo = false;
-                }
-
-                // Drena mensajes BLE para que no se acumulen mientras está bloqueado
-                miBluetooth.leer(tempBle);
-
-                if (lector.leerTarjeta()) {
-                    lector.disableAntenna(); // apagar RF antes de escribir por I2C
-
-                    if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
-                        if (tieneHora) snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
-                        miLcd.mostrarMensaje("Acceso concedido", tieneHora ? bufferHora : "");
-                        printf("ACCESO CONCEDIDO [%s]\n", bufferHora);
-                        vTaskDelay(pdMS_TO_TICKS(1000));
-                        estadoActual = ESTADO_ACTIVO;
-                        primerIngresoActivo = true;
-                        strcpy(bufferBle, "Sin mensajes");
-                        // antena se reactiva en primerIngresoActivo
-
-                    } else if (lector.verificarTarjeta(KEY_REINAS)) {
-                        miLcd.mostrarMensaje("Hola Reinas!", "");
-                        printf("REINAS DE LA ELECTRONICA [%s]\n", bufferHora);
-                        vTaskDelay(pdMS_TO_TICKS(2000));
-                        lector.enableAntenna();
-                        refrescarBloqueo = true;
-
-                    } else {
-                        miLcd.mostrarMensaje("Acceso denegado", "UID no registrado");
-                        printf("ACCESO DENEGADO [%s]\n", bufferHora);
-                        vTaskDelay(pdMS_TO_TICKS(2000));
-                        lector.enableAntenna();
-                        refrescarBloqueo = true;
-                    }
-                }
-                break;
-
-            case ESTADO_ACTIVO:
-                if (primerIngresoActivo) {
-                    lector.enableAntenna(); // reactivar RF al entrar al estado activo
-                    miLcd.mostrarMensaje(bufferBle, "");
-                    primerIngresoActivo = false;
-                }
-
-                if (miBluetooth.leer(tempBle)) {
-                    strncpy(bufferBle, tempBle, 16);
-                    bufferBle[16] = '\0';
-                    miLcd.setCursor(0, 0);
-                    miLcd.print("                ");
-                    miLcd.setCursor(0, 0);
-                    miLcd.print(bufferBle);
-                }
-
-                if (tieneHora) {
-                    snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
-                    miLcd.setCursor(1, 0);
-                    miLcd.print(bufferHora);
-                }
-
-                if (lector.leerTarjeta()) {
-                    if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
-                        lector.disableAntenna();
-                        miLcd.mostrarMensaje("Sesion cerrada", "");
-                        printf("SESION CERRADA\n");
-                        vTaskDelay(pdMS_TO_TICKS(1000));
-                        lector.enableAntenna();
-                        estadoActual = ESTADO_BLOQUEADO;
-                        refrescarBloqueo = true;
-                    }
-                }
-                break;
+        if (!rtc_get_time(&h, &m, &s)) {
+            printf("Error I2C: No se encuentra el RTC en 0x%02X\n", RTC_ADDR);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
         }
 
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(200));
+        if (lector.leerTarjeta()) {
+            snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
+
+            if (lector.verificarTarjeta(KEY_AUTORIZADO)) {
+                printf("AUTORIZADO [%s]\n", bufferHora);
+                miLcd.mostrarMensaje("Acceso Concedido", bufferHora);
+
+            } else if (lector.verificarTarjeta(KEY_NO_AUTORIZADO)) {
+                printf("NO AUTORIZADO [%s]\n", bufferHora);
+                miLcd.mostrarMensaje("Acceso Denegado", bufferHora);
+
+            } else if (lector.verificarTarjeta(KEY_REINAS)) {
+                printf("REINAS DE LA ELECTRONICA [%s]\n", bufferHora);
+                miLcd.mostrarMensaje("Hola Reinas!", bufferHora);
+
+            } else {
+                printf("TARJETA DESCONOCIDA [%s]\n", bufferHora);
+                miLcd.mostrarMensaje("Acceso Denegado", "UID no reg.");
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            ultimo_segundo = 60;
+
+        } else {
+            if (s != ultimo_segundo) {
+                snprintf(bufferHora, sizeof(bufferHora), "Hora: %02d:%02d:%02d", h, m, s);
+                miLcd.mostrarMensaje("Panel bloqueado", bufferHora);
+                ultimo_segundo = s;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
