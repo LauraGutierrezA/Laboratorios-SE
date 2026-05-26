@@ -10,6 +10,7 @@
 #include "I2C.h"
 #include "LCD.h"
 #include "BleNus.h"
+#include "LED.h"
 
 #define SPI_MOSI_PIN  23
 #define SPI_MISO_PIN  19
@@ -32,7 +33,7 @@
 static const uint8_t KEY_SUPERVISOR[4] = {0xFB, 0x55, 0x14, 0x07};
 static const uint8_t KEY_REINAS[4]     = {0x88, 0x04, 0x5B, 0x9C};
 
-enum EstadoSistema { ESTADO_BLOQUEADO, ESTADO_ACTIVO };
+enum EstadoSistema { ESTADO_BLOQUEADO, ESTADO_ACTIVO, ESTADO_QUEENS };
 
 uint8_t dec2bcd(uint8_t dec) { return ((dec / 10) << 4) | (dec % 10); }
 uint8_t bcd2dec(uint8_t bcd) { return ((bcd >> 4) * 10) + (bcd & 0x0F); }
@@ -76,15 +77,28 @@ extern "C" void app_main() {
     gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
     gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
 
+    // I2CMaster(port, sdaPin, sclPin,  speedHz)
     I2CMaster i2cBus(I2C_NUM_0, I2C_SDA_PIN, I2C_SCL_PIN, 10000);
     i2cBus.init();
+
+    // LCD(port,  slaveAddr )
     LCD miLcd(I2C_NUM_0, LCD_I2C_ADDR);
     miLcd.init();
 
+    // SPI(spiHost, mosi, miso, clk, cs, mode, msbFirst);
     SPI spiBus(SPI2_HOST, SPI_MOSI_PIN, SPI_MISO_PIN, SPI_CLK_PIN, SPI_CS_PIN, 0, true);
     spiBus.init();
+
+    // Rfid(spi(el que acabo de poner))
     Rfid lector(spiBus);
     lector.init();
+
+    //Leds
+    Led ledVerde(PIN_LED_VERDE);
+    Led ledRojo(PIN_LED_ROJO);
+    Led ledAzul(PIN_LED_AZUL);
+    Led buzzer(PIN_BUZZER);
+
 
     BleNus miBluetooth;
     miBluetooth.init("PanelHMI");
@@ -106,129 +120,142 @@ extern "C" void app_main() {
 
         switch (estadoActual) {
 
-        case ESTADO_BLOQUEADO:
+            case ESTADO_BLOQUEADO:
 
-            // Forzar estados de LEDs correctos de forma continua en bucle de bloqueo
-            gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
-            gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
-            gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
+                // Forzar estados de LEDs correctos de forma continua en bucle de bloqueo
+                gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
+                gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
+                gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
 
-            if (refrescarBloqueo) {
-                lcd_seguro(lector, miLcd, "Panel bloqueado", "Acerque credencial");
-                refrescarBloqueo = false;
-            }
+                if (refrescarBloqueo) {
+                    lcd_seguro(lector, miLcd, "Panel bloqueado", "Acerque credencial");
+                    refrescarBloqueo = false;
+                }
 
-            miBluetooth.leer(tempBle);
+                if (lector.leerTarjeta()) {
+                    lector.disableAntenna();
+                    vTaskDelay(pdMS_TO_TICKS(50)); 
 
-            if (lector.leerTarjeta()) {
-                lector.disableAntenna();
-                vTaskDelay(pdMS_TO_TICKS(50)); 
-
-                if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
-                    if (tieneHora)
-                        snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
-                    
-                    miLcd.mostrarMensaje("Acceso concedido", tieneHora ? bufferHora : "");
-                    printf("ACCESO CONCEDIDO [%s]\n", bufferHora);
-                    
-        
-                    gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
-                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0); 
-                    gpio_set_level((gpio_num_t)PIN_LED_VERDE, 1);
-                    gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
-                    gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
-                    
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
-                    gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0); 
-
-                    strcpy(bufferBle, "Sin mensajes");
-                    estadoActual        = ESTADO_ACTIVO;
-                    primerIngresoActivo = true;
-
-                } else if (lector.verificarTarjeta(KEY_REINAS)) {
-                    miLcd.mostrarMensaje("Hola Reinas!", "");
-                    vTaskDelay(pdMS_TO_TICKS(2000));
-                    lector.enableAntenna();
-                    refrescarBloqueo = true;
-
-                } else {
-                    miLcd.mostrarMensaje("Acceso denegado", "UID no registrado");
-                    printf("ACCESO DENEGADO\n");
-
-                    gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
-                    for (int i = 0; i < 3; i++) {
+                    if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
+                        if (tieneHora){
+                            snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
+                        };
+                        miLcd.mostrarMensaje("Acceso concedido", tieneHora ? bufferHora : "");
+                        printf("ACCESO CONCEDIDO [%s]\n", bufferHora);
+                        
                         gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
-                        vTaskDelay(pdMS_TO_TICKS(333));
-                        gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
-                        vTaskDelay(pdMS_TO_TICKS(333));
+                        gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0); 
+                        gpio_set_level((gpio_num_t)PIN_LED_VERDE, 1);
+                        gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
+                        vTaskDelay(pdMS_TO_TICKS(500)); 
+                        gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
+                        
+                        vTaskDelay(pdMS_TO_TICKS(500)); 
+                        gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0); 
+
+                        strcpy(bufferBle, "Sin mensajes");}
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        estadoActual        = ESTADO_ACTIVO;
+                        primerIngresoActivo = true;
+
+                    } else if (lector.verificarTarjeta(KEY_REINAS)) {
+                        estadoActual = ESTADO_QUEENS;
+
+                    } else {
+                        miLcd.mostrarMensaje("Acceso denegado", "UID no registrado");
+                        printf("ACCESO DENEGADO\n");
+
+                        gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
+                        for (int i = 0; i < 3; i++) {
+                            gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
+                            vTaskDelay(pdMS_TO_TICKS(333));
+                            gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
+                            vTaskDelay(pdMS_TO_TICKS(333));
+                        }
+                        gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
+                        
+                        lector.enableAntenna();
+                        refrescarBloqueo = true;
                     }
-                    gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
-                    
-                    lector.enableAntenna();
-                    refrescarBloqueo = true;
-                }
-            }
-            break;
-
-        case ESTADO_ACTIVO:
-
+                break;
             
-            gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
-            gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
-            gpio_set_level((gpio_num_t)PIN_LED_AZUL, 1); 
+                case ESTADO_ACTIVO:
 
-            if (primerIngresoActivo) {
-                lector.enableAntenna();
-                miLcd.mostrarMensaje(bufferBle, "");
-                primerIngresoActivo = false;
-            }
+                    miBluetooth.leer(tempBle);
 
-            if (miBluetooth.leer(tempBle)) {
-                strncpy(bufferBle, tempBle, 16);
-                bufferBle[16] = '\0';
+                    gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
+                    gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
+                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 1); 
+
+                    if (primerIngresoActivo) {
+                        lector.enableAntenna();
+                        miLcd.mostrarMensaje(bufferBle, "");
+                        primerIngresoActivo = false;
+                    }
+
+                    if (miBluetooth.leer(tempBle)) {
+                        strncpy(bufferBle, tempBle, 16);
+                        bufferBle[16] = '\0';
+                        
+                        lector.disableAntenna();
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                        miLcd.setCursor(0, 0);
+                        miLcd.print("                ");
+                        miLcd.setCursor(0, 0);
+                        miLcd.print(bufferBle);
+                        lector.enableAntenna();
+                    }
+
+                    if (tieneHora) {
+                        snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
+                        lector.disableAntenna();
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                        miLcd.setCursor(1, 0);
+                        miLcd.print(bufferHora);
+                        lector.enableAntenna();
+                    }
+
+                    if (lector.leerTarjeta()) {
+                        lector.disableAntenna();
+                        vTaskDelay(pdMS_TO_TICKS(50));
+
+                        if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
+                            miLcd.mostrarMensaje("Sesion cerrada", ""); //Bonus
+                            printf("SESION CERRADA\n");
+
+                            gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
+                            gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
+                            vTaskDelay(pdMS_TO_TICKS(500)); 
+                            gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
+
+                            lector.enableAntenna();
+                            estadoActual     = ESTADO_BLOQUEADO;
+                            refrescarBloqueo = true;
+                        } else {
+                            lector.enableAntenna();
+                        }
+                    }
+                    break;
                 
-                lector.disableAntenna();
-                vTaskDelay(pdMS_TO_TICKS(50));
-                miLcd.setCursor(0, 0);
-                miLcd.print("                ");
-                miLcd.setCursor(0, 0);
-                miLcd.print(bufferBle);
-                lector.enableAntenna();
-            }
 
-            if (tieneHora) {
-                snprintf(bufferHora, sizeof(bufferHora), "%02d:%02d:%02d", h, m, s);
-                lector.disableAntenna();
-                vTaskDelay(pdMS_TO_TICKS(50));
-                miLcd.setCursor(1, 0);
-                miLcd.print(bufferHora);
-                lector.enableAntenna();
-            }
-
-            if (lector.leerTarjeta()) {
-                lector.disableAntenna();
-                vTaskDelay(pdMS_TO_TICKS(50));
-
-                if (lector.verificarTarjeta(KEY_SUPERVISOR)) {
-                    miLcd.mostrarMensaje("Sesion cerrada", "");
-                    printf("SESION CERRADA\n");
-
-                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
-                    gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
+                case ESTADO_QUEENS : 
+                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 1);
+                    gpio_set_level((gpio_num_t)PIN_LED_VERDE, 1);
+                    gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
                     gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    for (int i = 0; i < 3; i++){
+                        ledAzul.breathe(5);
+                        ledVerde.breathe(5);
+                        ledRojo.breathe(5);
+                        buzzer.breathe(5);
+                        vTaskDelay(pdMS_TO_TICKS(500));
+                    };
+                    break;
+                    miLcd.mostrarMensaje("Tus Alumnas Favoritas", "Las Reinas de la Electrónica");
+                    vTaskDelay(pdMS_TO_TICKS(3000));
 
-                    lector.enableAntenna();
-                    estadoActual     = ESTADO_BLOQUEADO;
-                    refrescarBloqueo = true;
-                } else {
-                    lector.enableAntenna();
-                }
-            }
-            break;
-        }
-
+        };
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(200));
     }
 }
