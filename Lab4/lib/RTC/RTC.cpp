@@ -20,12 +20,15 @@ uint8_t Rtc::bcdaDecimal (uint8_t bcd){
 
 void Rtc::setTime(uint8_t time[7]){
     uint8_t data[7];
-    for (int i = 0; i < 7; i++) data[i] = time[i];
-    // Bit 7 del registro de segundos es CH (Clock Halt): 0 = oscilador activo.
-    // DS1307 arranca con CH indefinido cuando Vbat=GND → forzamos CH=0 explícitamente.
+    // Convertimos cada dato de decimal a BCD antes de enviarlo
+    for (int i = 0; i < 7; i++) {
+        data[i] = decimalaBcd(time[i]);
+    }
+    // Forzamos que el oscilador arranque (CH = 0)
     data[0] &= 0x7F;
     _i2c_rtc.writeBytes(_addr, 0x00, data, 7);
 }
+
 
 bool Rtc::getTime(uint8_t &hour, uint8_t &min, uint8_t &sec){
     uint8_t datos[7];

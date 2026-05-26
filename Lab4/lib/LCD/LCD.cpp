@@ -24,10 +24,10 @@ void LCD::sendNibble(uint8_t nibble, uint8_t rs)
     uint8_t data = (nibble & 0xF0) | LCD_BACKLIGHT | rs;
 
     writeByte(data | LCD_ENABLE);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(pdMS_TO_TICKS(2)); // <-- Subir a 2ms para que el LCD detecte el flanco de subida
 
     writeByte(data & ~LCD_ENABLE);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(pdMS_TO_TICKS(2)); // <-- Subir a 2ms para darle estabilidad al bus I2C
 }
 
 void LCD::sendByte(uint8_t data, uint8_t rs)
@@ -49,23 +49,30 @@ void LCD::data(uint8_t data)
 
 void LCD::init()
 {
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(100)); // <-- Subir a 100ms. Darle tiempo al LCD de encender tras el reset del ESP32
 
-    sendNibble(0x30, 0); //Asegurarse que está en modo 8 bits
-    vTaskDelay(pdMS_TO_TICKS(5));
+    sendNibble(0x30, 0); // Asegurarse que está en modo 8 bits
+    vTaskDelay(pdMS_TO_TICKS(10)); // <-- Cambiar a 10ms (el datasheet pide mínimo 4.1ms)
 
     sendNibble(0x30, 0);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    sendNibble(0x30, 0); //hay que repetirlo 3 veces porque si
+    sendNibble(0x30, 0); 
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    sendNibble(0x20, 0); //Se configura en modo 4 bits
+    sendNibble(0x20, 0); // Se configura en modo 4 bits
     vTaskDelay(pdMS_TO_TICKS(5));
 
+    // Ejecutar comandos de función con pausas para asegurar que los tome
     command(0x28); // 4 bits, 2 líneas, fuente 5x8
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
     command(0x0C); // display ON, cursor OFF
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
     command(0x06); // cursor incrementa hacia la derecha
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
     clear();
 }
 

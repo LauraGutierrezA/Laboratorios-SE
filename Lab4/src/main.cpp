@@ -10,6 +10,8 @@
 #include "I2C.h"
 #include "LCD.h"
 #include "BleNus.h"
+#include "../lib/RTC/RTC.h"
+#include "LED.h"
 
 #define SPI_MOSI_PIN  23
 #define SPI_MISO_PIN  19
@@ -25,28 +27,12 @@
 #define PIN_LED_ROJO    32
 #define PIN_LED_VERDE   33
 #define PIN_LED_AZUL    25
-
 #define PIN_BUZZER      14
-
 
 static const uint8_t KEY_SUPERVISOR[4] = {0xFB, 0x55, 0x14, 0x07};
 static const uint8_t KEY_REINAS[4]     = {0x88, 0x04, 0x5B, 0x9C};
 
-enum EstadoSistema { ESTADO_BLOQUEADO, ESTADO_ACTIVO };
-
-uint8_t dec2bcd(uint8_t dec) { return ((dec / 10) << 4) | (dec % 10); }
-uint8_t bcd2dec(uint8_t bcd) { return ((bcd >> 4) * 10) + (bcd & 0x0F); }
-
-bool rtc_get_time(uint8_t *h, uint8_t *m, uint8_t *s) {
-    uint8_t reg = 0x00;
-    if (i2c_master_write_to_device(I2C_NUM_0, RTC_ADDR, &reg, 1, pdMS_TO_TICKS(50)) != ESP_OK) return false;
-    uint8_t data[3];
-    if (i2c_master_read_from_device(I2C_NUM_0, RTC_ADDR, data, 3, pdMS_TO_TICKS(50)) != ESP_OK) return false;
-    *s = bcd2dec(data[0] & 0x7F);
-    *m = bcd2dec(data[1]);
-    *h = bcd2dec(data[2] & 0x3F);
-    return true;
-}
+enum EstadoSistema { ESTADO_BLOQUEADO, ESTADO_ACTIVO, ESTADO_QUEENS};
 
 static void lcd_seguro(Rfid &lector, LCD &lcd, const char *linea1, const char *linea2) {
     lector.disableAntenna();
@@ -58,14 +44,13 @@ static void lcd_seguro(Rfid &lector, LCD &lcd, const char *linea1, const char *l
 
 extern "C" void app_main() {
 
-    // 1. Reset físico del RFID
+
     gpio_set_direction((gpio_num_t)PIN_RST, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)PIN_RST, 0);
     vTaskDelay(pdMS_TO_TICKS(50));
     gpio_set_level((gpio_num_t)PIN_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Inicialización de Actuadores
     gpio_set_direction((gpio_num_t)PIN_LED_ROJO, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)PIN_LED_VERDE, GPIO_MODE_OUTPUT);
     gpio_set_direction((gpio_num_t)PIN_LED_AZUL, GPIO_MODE_OUTPUT);
@@ -78,16 +63,28 @@ extern "C" void app_main() {
 
     I2CMaster i2cBus(I2C_NUM_0, I2C_SDA_PIN, I2C_SCL_PIN, 10000);
     i2cBus.init();
+    
     LCD miLcd(I2C_NUM_0, LCD_I2C_ADDR);
     miLcd.init();
 
+   
+    Rtc miRtc(i2cBus, RTC_ADDR);
+
+    Led ledVerde(PIN_LED_VERDE);
+    Led ledRojo(PIN_LED_ROJO);
+    Led ledAzul(PIN_LED_AZUL);
+    Led buzzer(PIN_BUZZER);
+
+
+    uint8_t horaInicial[7] = {0, 44, 12, 2, 26, 5, 26}; 
+    miRtc.setTime(horaInicial);
     SPI spiBus(SPI2_HOST, SPI_MOSI_PIN, SPI_MISO_PIN, SPI_CLK_PIN, SPI_CS_PIN, 0, true);
     spiBus.init();
     Rfid lector(spiBus);
     lector.init();
 
     BleNus miBluetooth;
-    miBluetooth.init("PanelHMI");
+    miBluetooth.init("PanelReinas");
 
     printf("=== PANEL HMI LISTO ===\n");
 
@@ -102,13 +99,14 @@ extern "C" void app_main() {
 
     while (1) {
         uint8_t h = 0, m = 0, s = 0;
-        bool tieneHora = rtc_get_time(&h, &m, &s);
+        
+
+        bool tieneHora = miRtc.getTime(h, m, s);
 
         switch (estadoActual) {
 
         case ESTADO_BLOQUEADO:
 
-            // Forzar estados de LEDs correctos de forma continua en bucle de bloqueo
             gpio_set_level((gpio_num_t)PIN_LED_ROJO, 1);
             gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
             gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
@@ -131,15 +129,14 @@ extern "C" void app_main() {
                     miLcd.mostrarMensaje("Acceso concedido", tieneHora ? bufferHora : "");
                     printf("ACCESO CONCEDIDO [%s]\n", bufferHora);
                     
-        
                     gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
-                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0); 
+                    gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
                     gpio_set_level((gpio_num_t)PIN_LED_VERDE, 1);
                     gpio_set_level((gpio_num_t)PIN_BUZZER, 1);
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
+                    vTaskDelay(pdMS_TO_TICKS(500));  
                     gpio_set_level((gpio_num_t)PIN_BUZZER, 0);
                     
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
+                    vTaskDelay(pdMS_TO_TICKS(500));  
                     gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0); 
 
                     strcpy(bufferBle, "Sin mensajes");
@@ -147,11 +144,7 @@ extern "C" void app_main() {
                     primerIngresoActivo = true;
 
                 } else if (lector.verificarTarjeta(KEY_REINAS)) {
-                    miLcd.mostrarMensaje("Hola Reinas!", "");
-                    vTaskDelay(pdMS_TO_TICKS(2000));
-                    lector.enableAntenna();
-                    refrescarBloqueo = true;
-
+                    estadoActual = ESTADO_QUEENS;
                 } else {
                     miLcd.mostrarMensaje("Acceso denegado", "UID no registrado");
                     printf("ACCESO DENEGADO\n");
@@ -173,7 +166,6 @@ extern "C" void app_main() {
 
         case ESTADO_ACTIVO:
 
-            
             gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
             gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
             gpio_set_level((gpio_num_t)PIN_LED_AZUL, 1); 
@@ -227,6 +219,66 @@ extern "C" void app_main() {
                 }
             }
             break;
+
+        case ESTADO_QUEENS: 
+                
+                miLcd.mostrarMensaje("Tus Alumnas Favs", "ElectronicQueens");
+
+                ledAzul.off();
+                ledVerde.off();
+                ledRojo.off();
+                buzzer.off(); 
+                vTaskDelay(pdMS_TO_TICKS(100)); 
+
+               
+                for (int i = 0; i < 3; i++){
+                    ledAzul.on();
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                    ledAzul.off();
+                    
+                    ledVerde.on();
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                    ledVerde.off();
+                    
+                    ledRojo.on();
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                    ledRojo.off();
+                    
+                    vTaskDelay(pdMS_TO_TICKS(100)); 
+                }
+
+                for (int i = 0; i < 2; i++){
+                    ledAzul.breathe(5);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    ledVerde.breathe(5);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    ledRojo.breathe(5);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                }
+                
+
+                ledAzul.off();
+                ledVerde.off();
+                ledRojo.off();
+
+              
+                gpio_set_direction((gpio_num_t)PIN_LED_AZUL, GPIO_MODE_OUTPUT);
+                gpio_set_direction((gpio_num_t)PIN_LED_VERDE, GPIO_MODE_OUTPUT);
+                gpio_set_direction((gpio_num_t)PIN_LED_ROJO, GPIO_MODE_OUTPUT);
+                
+        
+                gpio_set_level((gpio_num_t)PIN_LED_AZUL, 0);
+                gpio_set_level((gpio_num_t)PIN_LED_VERDE, 0);
+                gpio_set_level((gpio_num_t)PIN_LED_ROJO, 0);
+               
+                lector.enableAntenna();       
+                refrescarBloqueo = true;     
+                estadoActual = ESTADO_BLOQUEADO;
+
+
+                xLastWakeTime = xTaskGetTickCount(); 
+            break;
+
         }
 
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(200));
